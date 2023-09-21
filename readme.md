@@ -42,7 +42,8 @@
     5. 查询器（Queryer）负责将文本扫描成Token，并向索引管理器查询文档集合。在文档集合根据布尔查询进行合并或者过滤。排序器将查询结果进行优先级排序。
 
 
-    - 文档LOAD过程测试结果
+
+- 文档LOAD过程测试结果
 
     ```sh
     cd example/sina && go test -v -run TestSinaDocumentBuild
