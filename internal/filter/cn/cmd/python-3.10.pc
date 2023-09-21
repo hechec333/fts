@@ -1,0 +1,13 @@
+# See: man pkg-config
+prefix=C:\Python310
+exec_prefix=${prefix}
+libdir=${exec_prefix}/Lib
+includedir=${prefix}/include
+​
+Name: Python
+Description: Python library
+Requires:
+Version: 3.10
+Libs.private: -ldl  -framework CoreFoundation
+Libs: -L${libdir} -lpython3.10
+Cflags: -I${includedir}/python3.10
