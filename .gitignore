@@ -1,0 +1,5 @@
+*.gz
+*.7z
+*.zip
+.vscode
+.idea
