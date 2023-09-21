@@ -1,4 +1,5 @@
 #ignore compact file
+data/*.gz
 *.zip
 *.gz
 *.tar.gz
