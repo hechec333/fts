@@ -1,0 +1,9 @@
+#ignore compact file
+*.zip
+*.gz
+*.tar.gz
+*.rar
+*.7z
+#ignore ide file
+.idea
+.vscode
