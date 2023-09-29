@@ -3,6 +3,7 @@ package internal
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"io"
 	"log"
 	"math"
@@ -14,6 +15,8 @@ var (
 	SST_SIZE    = 1024 * 64 //64kb
 	HASH_WAY    = 4
 	FILTER_SIZE = 1024 * 2
+
+	ErrNoSpace = errors.New("no space of sst")
 )
 
 type SortSuffixTable struct {
@@ -67,8 +70,20 @@ func NewSSTDump(b []byte) *SortSuffixTable {
 	return n
 }
 
-func (sst *SortSuffixTable) InsertRecord(rc Record) {
+func (sst *SortSuffixTable) caninsert() bool {
+	off := int(5 * unsafe.Sizeof(sst.header.PageID))
+	off += len(sst.header.Max) + len(sst.header.Min)
 
+	off += 3 * int(unsafe.Sizeof(sst.header.bloom.k))
+
+	off += int(sst.header.bloom.m)
+
+	return sst.header.Offset > int64(off)
+}
+func (sst *SortSuffixTable) InsertRecord(rc Record) error {
+	if !sst.caninsert() {
+		return ErrNoSpace
+	}
 	if rc.Suffix < sst.header.Min {
 		sst.header.Min = rc.Suffix
 		sst.Records = append([]Record{rc}, sst.Records...)
@@ -76,7 +91,6 @@ func (sst *SortSuffixTable) InsertRecord(rc Record) {
 		sst.header.Max = rc.Suffix
 		sst.Records = append(sst.Records, rc)
 	} else {
-
 		var (
 			idx int = -1
 		)
@@ -92,6 +106,9 @@ func (sst *SortSuffixTable) InsertRecord(rc Record) {
 			sst.Records = append(sst.Records[:idx], append([]Record{rc}, sst.Records[idx:]...)...)
 		}
 	}
+
+	sst.header.Offset -= int64(unsafe.Sizeof(rc.ID)) + int64(unsafe.Sizeof(int32(0))) + int64(len(rc.Suffix))
+	return nil
 }
 
 func (sst *SortSuffixTable) RemoveRecord(rc Record) {
