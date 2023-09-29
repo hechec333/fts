@@ -299,3 +299,19 @@ func ExtractMetaTypeName(t reflect.Type) string {
 		return s
 	}
 }
+
+func GenBatchRand(batch int, up int) (res []int) {
+	rand.Seed(time.Now().UnixNano()) // 初始化随机数种子
+
+	numbers := make(map[int]bool) // 创建一个map来存储随机数
+	for len(numbers) < batch {
+		num := rand.Intn(up) // 生成一个[0,100)范围内的随机整数
+		numbers[num] = true  // 将生成的随机数添加到map中，重复的数字会被忽略
+	}
+
+	for k := range numbers {
+		res = append(res, k)
+	}
+
+	return
+}
