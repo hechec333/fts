@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"container/list"
 	"encoding/binary"
+	"errors"
 	"fts/internal/common"
 	"io"
 	"os"
@@ -12,7 +13,8 @@ import (
 )
 
 var (
-	CACHE_NODE int64 = 4
+	CACHE_NODE     int64 = 4
+	ErrNotFoundKey error = errors.New("Not Found Key")
 )
 
 type SstManager struct {
@@ -47,13 +49,39 @@ retry:
 		}
 	}
 	cnt++
-	sm.getPage(s)
+	sm.getRecordPage(s)
 	if cnt >= 2 {
 		sm.flushAll()
 	}
 	goto retry
 }
 
+func (sm *SstManager) search(s string) (*Record, *SortSuffixTable, bool) {
+	for iter := sm.ca.Front(); iter != nil; iter = iter.Next() {
+		xv := iter.Value.(*SortSuffixTable)
+
+		if re := xv.SearchRecord(s); re != nil {
+			return re, xv, true
+		}
+	}
+	var (
+		re  *Record
+		sst *SortSuffixTable
+	)
+
+	re, sst = sm.getRecordPage(s)
+
+	return re, sst, re != nil
+}
+func (sm *SstManager) Update(s string, re Record) error {
+	_, sst, ok := sm.search(s)
+
+	if !ok {
+		return ErrNotFoundKey
+	}
+
+	return sst.UpdateRecord(s, re)
+}
 func (sm *SstManager) Insert(re Record) {
 
 	var (
@@ -70,6 +98,8 @@ func (sm *SstManager) Insert(re Record) {
 				panic(err)
 			}
 		}
+		idx := bsearch(sm.headers, xv.header.PageID)
+		sm.headers[idx] = xv.header
 		return
 	}
 
@@ -91,8 +121,63 @@ func (sm *SstManager) Insert(re Record) {
 }
 
 func (sm *SstManager) SearchRange(low, high string) []Record {
+	type pack struct {
+		loc    int64
+		header *PageHeader
+	}
+	targets := make([]pack, 0)
 
+	for idx, v := range sm.headers {
+		if v.Min > high || v.Max < low {
+			continue
+		}
+
+		targets = append(targets, pack{
+			loc:    sm.locations[idx],
+			header: &sm.headers[idx],
+		})
+	}
+	var records []Record
+
+	forEach := func(pk pack) {
+		for iter := sm.ca.Front(); iter != nil; iter = iter.Next() {
+			xv := iter.Value.(*SortSuffixTable)
+			if xv.header.PageID == pk.header.PageID {
+				records = append(records, xv.SearchRangeRecord(low, high)...)
+			}
+		}
+
+	}
+
+	for _, v := range targets {
+		forEach(v)
+	}
+	fetch := func(pk pack) {
+		b := make([]byte, SST_SIZE)
+
+		sm.f.ReadAt(b, pk.loc)
+
+		page := NewSSTDump(b)
+
+		if page == nil {
+			return
+		}
+
+		records = append(records, page.SearchRangeRecord(low, high)...)
+
+		if sm.ca.Len() >= int(2*CACHE_NODE) {
+			sm.flushPage(pk.loc)
+		}
+		sm.ca.PushBack(page)
+
+	}
+	for _, v := range targets {
+		fetch(v)
+	}
+
+	return records
 }
+
 func (sm *SstManager) init() {
 	var err error
 	if common.IsExist(sm.root + "/.sst") {
@@ -107,10 +192,10 @@ func (sm *SstManager) init() {
 	}
 }
 
-func (sm *SstManager) getPage(s string) *Record {
+func (sm *SstManager) getRecordPage(s string) (*Record, *SortSuffixTable) {
 
 	if sm.ca.Len() > int(CACHE_NODE) {
-		sm.flushPage()
+		sm.flushUntilIdle()
 	}
 
 	sl := make([]*SortSuffixTable, 0)
@@ -134,15 +219,21 @@ func (sm *SstManager) getPage(s string) *Record {
 			sm.ca.PushBack(v)
 		}
 	}()
-	for _, v := range sl {
+	for ixd, v := range sl {
 		if re = v.SearchRecord(s); re != nil {
-			return re
+			return re, sl[ixd]
 		}
 	}
-	return nil
+	return nil, nil
 }
+func (sm *SstManager) flushPage(loc int64) {
+	xv := sm.ca.Front().Value
 
-func (sm *SstManager) flushPage() {
+	sm.ca.Remove(sm.ca.Front())
+	b, _ := xv.(*SortSuffixTable).Dump()
+	sm.f.WriteAt(b, loc)
+}
+func (sm *SstManager) flushUntilIdle() {
 
 	for sm.ca.Len() > int(CACHE_NODE) {
 		iter := sm.ca.Front()

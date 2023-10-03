@@ -26,9 +26,15 @@ type SortSuffixTable struct {
 }
 
 type Record struct {
-	ID     int64
-	Suffix string
+	ID       int64
+	Suffix   string
+	RefCount uint8
 }
+
+func Equal(r1 *Record, r2 *Record) bool {
+	return r1.ID == r2.ID && r1.Suffix == r2.Suffix
+}
+
 type PageHeader struct {
 	Max    string
 	Min    string
@@ -80,6 +86,15 @@ func (sst *SortSuffixTable) caninsert() bool {
 
 	return sst.header.Offset > int64(off)
 }
+
+// suffix: sst sstfa strre
+func (sst *SortSuffixTable) MergeKeys(limit int) []string {
+	if limit <= 0 {
+		limit = 1
+	}
+
+	return nil
+}
 func (sst *SortSuffixTable) InsertRecord(rc Record) error {
 	if !sst.caninsert() {
 		return ErrNoSpace
@@ -97,6 +112,9 @@ func (sst *SortSuffixTable) InsertRecord(rc Record) error {
 		for idx = 0; idx < len(sst.Records); idx++ {
 			if sst.Records[idx].Suffix > rc.Suffix {
 				break
+			} else if sst.Records[idx].Suffix == rc.Suffix {
+				sst.Records[idx].RefCount++
+				return nil
 			}
 		}
 
@@ -110,7 +128,29 @@ func (sst *SortSuffixTable) InsertRecord(rc Record) error {
 	sst.header.Offset -= int64(unsafe.Sizeof(rc.ID)) + int64(unsafe.Sizeof(int32(0))) + int64(len(rc.Suffix))
 	return nil
 }
+func (sst *SortSuffixTable) IsExist(s string) bool {
+	if sst.header.Min > s || sst.header.Max < s {
+		return false
+	}
+	if !sst.header.bloom.TestString(s) {
+		return false
+	}
+	return true
+}
+func (sst *SortSuffixTable) UpdateRecord(s string, rc Record) error {
+	if !sst.IsExist(s) {
+		return ErrNotFoundKey
+	}
 
+	idx := binarySearchRecords(sst.Records, s)
+
+	if idx == -1 {
+		return ErrNotFoundKey
+	}
+
+	sst.Records[idx] = rc
+	return nil
+}
 func (sst *SortSuffixTable) RemoveRecord(rc Record) {
 
 	idx := binarySearchRecords(sst.Records, rc.Suffix)
@@ -196,6 +236,9 @@ func (sst *SortSuffixTable) Dump() (b []byte, err error) {
 			return
 		}
 		if err = binary.Write(w, binary.BigEndian, []byte(v.Suffix)); err != nil {
+			return
+		}
+		if err = binary.Write(w, binary.BigEndian, v.RefCount); err != nil {
 			return
 		}
 
@@ -410,6 +453,9 @@ func readRecord(r io.Reader) (Record, error) {
 	}
 	record.Suffix = string(s)
 
+	if err = binary.Read(r, binary.BigEndian, &record.RefCount); err != nil {
+		return record, err
+	}
 	return record, err
 }
 
